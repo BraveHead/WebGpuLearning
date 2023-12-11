@@ -45,11 +45,11 @@ async function initPipeline(device: GPUDevice, format: GPUTextureFormat) {
 	// 顶点点位
 	const vertex = new Float32Array([
 		// 0
-		0, 0.5, 0,
+		0, 0.5, 0.5,
 		// 1
-		-0.5, -0.5, 0,
+		0, -0.5, 1,
 		// 2
-		0.5, -0.5, 0.0,
+		0.5, -0.5, 0,
 	])
 	// 建立顶点缓冲区
 	const vertexBuffer = device.createBuffer({
@@ -74,7 +74,7 @@ async function initPipeline(device: GPUDevice, format: GPUTextureFormat) {
 			buffers: [
 				{
 					// 顶点长度，以字节为单位
-					arrayStride: 3 * 4,
+					arrayStride: 3 * (vertex.byteLength / vertex.length),
 					attributes: [
 						{
 							// 变量索引

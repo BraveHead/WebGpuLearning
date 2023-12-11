@@ -1,5 +1,5 @@
-import triangle from "./shaders/triangle.vert.wgsl?raw"
-import redFrag from "./shaders/red.frag.wgsl?raw"
+import modelVert from './shaders/model.vert.wgsl?raw';
+import colorVert from './shaders/color.frag.wgsl?raw';
 
 // 初始化WebGPU
 async function initWebGPU(canvas: HTMLCanvasElement) {
@@ -20,6 +20,7 @@ async function initWebGPU(canvas: HTMLCanvasElement) {
 	const context = canvas.getContext("webgpu") as GPUCanvasContext
 	//获取浏览器默认的颜色格式
 	const format = navigator.gpu.getPreferredCanvasFormat()
+	console.log('format:', format);
 	//设备分辨率
 	const devicePixelRatio = window.devicePixelRatio || 1
 	//canvas尺寸
@@ -36,29 +37,76 @@ async function initWebGPU(canvas: HTMLCanvasElement) {
 		// Alpha合成模式，opaque为不透明
 		alphaMode: "opaque",
 	})
+	const vertex = new Float32Array([
+		0.5, 0.5, 0,
+		-0.5, -0.5, 0,
+		0.5, -0.5, 0.0
+	])
+	const vertexBuffer = device.createBuffer({
+		size: vertex.byteLength,
+		usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+	});
 
-	return { device, context, format, size }
+	const colorBuffer = device.createBuffer({
+		size: color?.byteLength,
+		usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+	});
+
+	const modelBuffer = device.createBuffer({
+		size: 4 * 4 *4,
+		usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+	})
+	return { device, context, format, size, vertex, vertexBuffer,colorBuffer,modelBuffer }
 }
+
+const modelMatrix = new Float32Array([
+	0.5,0,0,0,
+    0,0.5,0,0,
+    0,0,0.5,0,
+    0,0,0,1,
+]);
+
+const color = new Float32Array([0, 0, 1, 1]);
+
 // 创建渲染管线
 async function initPipeline(
 	device: GPUDevice,
-	format: GPUTextureFormat
+	format: GPUTextureFormat,
+	vertex: Float32Array,
+	vertexBuffer: GPUBuffer,
+	colorBuffer: GPUBuffer,
+	modelBuffer: GPUBuffer
 ): Promise<GPURenderPipeline> {
+	device.queue.writeBuffer(vertexBuffer, 0, vertex);
+	device.queue.writeBuffer(colorBuffer, 0, color)
+	device.queue.writeBuffer(modelBuffer, 0, modelMatrix)
 	const descriptor: GPURenderPipelineDescriptor = {
 		// 顶点着色器
 		vertex: {
 			// 着色程序
 			module: device.createShaderModule({
-				code: triangle,
+				code: modelVert,
 			}),
 			// 主函数
 			entryPoint: "main",
+			buffers: [
+				{
+					arrayStride: 3 * 4,
+					attributes: [
+						{
+							shaderLocation: 0,
+							offset: 0,
+							format: 'float32x3'
+						}
+					]
+				}
+			]
 		},
 		// 片元着色器
 		fragment: {
 			// 着色程序
 			module: device.createShaderModule({
-				code: redFrag,
+				code: colorVert,
 			}),
 			// 主函数
 			entryPoint: "main",
@@ -85,7 +133,11 @@ async function initPipeline(
 function draw(
 	device: GPUDevice,
 	context: GPUCanvasContext,
-	pipeline: GPURenderPipeline
+	pipelineObj: {
+		pipeline: GPURenderPipeline,
+		vertexBuffer: GPUBuffer,
+		uniformGroup: GPUBindGroup
+	}
 ) {
 	// 创建指令编码器
 	const commandEncoder = device.createCommandEncoder()
@@ -109,8 +161,12 @@ function draw(
 	// 建立渲染通道，类似图层
 	const passEncoder = commandEncoder.beginRenderPass(renderPassDescriptor)
 	// 传入渲染管线
-	passEncoder.setPipeline(pipeline)
-	// 绘图，3 个顶点
+	passEncoder.setPipeline(pipelineObj?.pipeline)
+	// 写入定点缓冲区
+	passEncoder.setVertexBuffer(0, pipelineObj?.vertexBuffer);
+	// 把含有颜色缓冲区的BindBuffer 写入渲染通道
+	passEncoder.setBindGroup(0, pipelineObj?.uniformGroup)
+	// 绘图，3 个顶点 
 	passEncoder.draw(3)
 	// 结束编码
 	passEncoder.end()
@@ -124,11 +180,32 @@ async function run() {
 	const canvas = document.querySelector("canvas")
 	if (!canvas) throw new Error("No Canvas")
 	// 初始化WebGPU
-	const { device, context, format } = await initWebGPU(canvas)
+	const { device, context, format, vertex, vertexBuffer, colorBuffer, modelBuffer } = await initWebGPU(canvas)
 	// 渲染管道
-	const pipeline = await initPipeline(device, format)
+	const pipeline = await initPipeline(device, format, vertex, vertexBuffer, colorBuffer, modelBuffer);
+	const uniformGroup = device.createBindGroup({
+		layout: pipeline.getBindGroupLayout(0),
+		entries: [
+			{
+				binding: 0,
+				resource: {
+					buffer: colorBuffer
+				}
+			},
+			{
+				binding: 1, 
+				resource: {
+					buffer: modelBuffer
+				}
+			}
+		]
+	});
 	// 绘图
-	draw(device, context, pipeline)
+	draw(device, context, {
+		pipeline,
+		vertexBuffer,
+		uniformGroup
+	})
 
 	// 自适应窗口尺寸
 	window.addEventListener("resize", () => {
@@ -139,7 +216,11 @@ async function run() {
 			format,
 			alphaMode: "opaque",
 		})
-		draw(device, context, pipeline)
+		draw(device, context, {
+			pipeline,
+			vertexBuffer,
+			uniformGroup
+		})
 	})
 }
 run()
